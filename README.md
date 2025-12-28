@@ -2,7 +2,7 @@
 
 Complete Nautilus (GNOME Files) extension for encrypting and decrypting files using **age** (Actually Good Encryption).
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue)
+![Version](https://img.shields.io/badge/version-1.4.1-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.8+-yellow)
 
@@ -60,8 +60,6 @@ All are installed automatically:
 - `zenity` - Graphical dialogs
 - `libnotify-bin` - System notifications
 - `coreutils` - Basic utilities (includes `shred`)
-
-### Optional Dependencies
 - `mat2` - Metadata cleaning tool (for privacy-focused encryption)
 
 ## 🚀 Installation
@@ -182,8 +180,8 @@ When `mat2` is installed, metadata is **automatically cleaned** before encryptio
 - Archives: ZIP, TAR
 
 **Requirements:**
-- `mat2` must be installed: `sudo apt install mat2`
-- If not installed, encryption proceeds without metadata cleaning (no warning)
+- `mat2` is installed automatically by the installer
+- Metadata cleaning is always available
 
 **Why clean metadata?**
 - Photos can reveal your location (GPS), camera, and when they were taken
@@ -363,6 +361,9 @@ Found a bug? Have an idea for improvement?
 5. Open a Pull Request
 
 ## 📝 Changelog
+
+### v1.4.1 (2025-12-28)
+- 📦 **mat2 Auto-Install**: mat2 is now installed automatically (no longer optional)
 
 ### v1.4.0 (2025-12-28)
 - 🔐 **Passphrase Only**: Removed manual password option - only auto-generated passphrases allowed

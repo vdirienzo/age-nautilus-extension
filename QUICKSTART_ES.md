@@ -1,6 +1,6 @@
 # 🚀 GUÍA RÁPIDA DE INSTALACIÓN - AGE NAUTILUS
 
-**Versión:** 1.2.0 | **Seguridad:** Rate limiting + Path validation
+**Versión:** 1.4.1 | **Seguridad:** Rate limiting + Path validation + mat2 auto-install
 
 ## ⚡ Instalación en 3 pasos
 
@@ -67,7 +67,7 @@ nautilus &
 
 ### Falta alguna dependencia
 ```bash
-sudo apt install python3-nautilus age zenity libnotify-bin
+sudo apt install python3-nautilus age zenity libnotify-bin mat2
 ```
 
 ---

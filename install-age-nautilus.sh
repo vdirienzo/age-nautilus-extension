@@ -78,10 +78,8 @@ if ! command -v shred &> /dev/null; then
     MISSING_DEPS+=("coreutils")
 fi
 
-# Check optional dependencies (mat2 for metadata cleaning)
-MAT2_INSTALLED=false
-if command -v mat2 &> /dev/null; then
-    MAT2_INSTALLED=true
+if ! command -v mat2 &> /dev/null; then
+    MISSING_DEPS+=("mat2")
 fi
 
 # Install missing dependencies
@@ -157,12 +155,7 @@ echo "  ✓ Path validation (traversal attack protection)"
 echo "  ✓ Security logging system"
 echo ""
 echo -e "${BLUE}Privacy features (v1.3.0):${NC}"
-if [ "$MAT2_INSTALLED" = true ]; then
-    echo "  ✓ Metadata cleaning with mat2 (installed)"
-else
-    echo -e "  ${YELLOW}○ Metadata cleaning with mat2 (not installed)${NC}"
-    echo "    To enable: sudo apt install mat2"
-fi
+echo "  ✓ Metadata cleaning with mat2"
 echo ""
 echo -e "${BLUE}New in v1.4.0:${NC}"
 echo "  ✓ Auto-generated 24-word passphrases (~215 bits entropy)"
