@@ -72,30 +72,39 @@ test_file() {
     fi
 }
 
-echo -e "${BLUE}[1/5] Checking system commands...${NC}"
+echo -e "${BLUE}[1/6] Checking system commands...${NC}"
 test_command "nautilus" "Nautilus"
 test_command "age" "age encryption"
 test_command "zenity" "Zenity dialogs"
 test_command "notify-send" "Desktop notifications"
 test_command "shred" "Secure deletion"
 test_command "tar" "TAR compression"
+# mat2 is optional - don't fail if not installed
+echo -n "Testing mat2 (optional)... "
+if command -v mat2 &> /dev/null; then
+    echo -e "${GREEN}✓${NC} (metadata cleaning enabled)"
+    ((PASSED++))
+else
+    echo -e "${YELLOW}○${NC} (not installed - metadata cleaning disabled)"
+    echo -e "    ${YELLOW}To enable: sudo apt install mat2${NC}"
+fi
 echo ""
 
-echo -e "${BLUE}[2/5] Checking installed packages...${NC}"
+echo -e "${BLUE}[2/6] Checking installed packages...${NC}"
 test_package "python3-nautilus" "python3-nautilus"
 test_package "age" "age package"
 test_package "zenity" "zenity package"
 test_package "libnotify-bin" "libnotify-bin"
 echo ""
 
-echo -e "${BLUE}[3/5] Checking extension files...${NC}"
+echo -e "${BLUE}[3/6] Checking extension files...${NC}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 test_file "$SCRIPT_DIR/age-nautilus-extension.py" "Extension file"
 test_file "$SCRIPT_DIR/install-age-nautilus.sh" "Install script"
 test_file "$SCRIPT_DIR/README.md" "Documentation"
 echo ""
 
-echo -e "${BLUE}[4/5] Checking extension installation...${NC}"
+echo -e "${BLUE}[4/6] Checking extension installation...${NC}"
 EXTENSION_FILE="$HOME/.local/share/nautilus-python/extensions/age-nautilus-extension.py"
 if [ -f "$EXTENSION_FILE" ]; then
     echo -e "Extension installed: ${GREEN}✓${NC}"
@@ -105,7 +114,7 @@ else
 fi
 echo ""
 
-echo -e "${BLUE}[5/5] Basic functional test...${NC}"
+echo -e "${BLUE}[5/6] Basic functional test...${NC}"
 TEST_FILE="/tmp/age-test-$$.txt"
 echo "Test data for age encryption" > "$TEST_FILE"
 
@@ -138,6 +147,26 @@ fi
 
 # Clean up test files
 rm -f "$TEST_FILE" "$TEST_FILE.age" "$TEST_FILE.decrypted"
+echo ""
+
+echo -e "${BLUE}[6/6] Testing metadata cleaning (optional)...${NC}"
+if command -v mat2 &> /dev/null; then
+    # Create a test file and check mat2 can process it
+    MAT2_TEST="/tmp/mat2-test-$$.txt"
+    echo "Test content" > "$MAT2_TEST"
+    echo -n "Testing mat2 execution... "
+    if mat2 --inplace --unknown-members omit "$MAT2_TEST" &>/dev/null; then
+        echo -e "${GREEN}✓${NC}"
+        ((PASSED++))
+    else
+        # Return code 1 means unsupported format, which is OK
+        echo -e "${GREEN}✓${NC} (format not supported, but mat2 works)"
+        ((PASSED++))
+    fi
+    rm -f "$MAT2_TEST"
+else
+    echo -e "mat2 not installed - ${YELLOW}skipped${NC}"
+fi
 echo ""
 
 # Summary

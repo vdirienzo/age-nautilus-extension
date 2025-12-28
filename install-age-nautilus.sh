@@ -78,6 +78,12 @@ if ! command -v shred &> /dev/null; then
     MISSING_DEPS+=("coreutils")
 fi
 
+# Check optional dependencies (mat2 for metadata cleaning)
+MAT2_INSTALLED=false
+if command -v mat2 &> /dev/null; then
+    MAT2_INSTALLED=true
+fi
+
 # Install missing dependencies
 if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
     print_warning "Missing dependencies: ${MISSING_DEPS[*]}"
@@ -129,9 +135,9 @@ echo -e "${BLUE}How to use:${NC}"
 echo "  1. Open Nautilus (GNOME Files)"
 echo "  2. Right-click on any file"
 echo "  3. You will see new options:"
-echo "     • 🔒 Encrypt with age      (encrypt file)"
-echo "     • 📦 Encrypt folder        (encrypt entire folder)"
-echo "     • 🔓 Decrypt with age      (decrypt .age file)"
+echo "     • Encrypt with age         (encrypt file)"
+echo "     • Encrypt folder with age  (encrypt entire folder)"
+echo "     • Decrypt with age         (decrypt .age file)"
 echo ""
 echo -e "${BLUE}Features included:${NC}"
 echo "  ✓ Encryption with ChaCha20-Poly1305 (state of the art)"
@@ -143,14 +149,29 @@ echo "  ✓ Automatic folder decompression"
 echo "  ✓ System notifications"
 echo "  ✓ Native GTK dialogs"
 echo "  ✓ Passphrase generator (one-click secure passwords)"
+echo "  ✓ Metadata cleaning before encryption (requires mat2)"
 echo ""
 echo -e "${BLUE}Security features (v1.2.0):${NC}"
 echo "  ✓ Rate limiting (brute-force protection)"
 echo "  ✓ Path validation (traversal attack protection)"
 echo "  ✓ Security logging system"
 echo ""
+echo -e "${BLUE}Privacy features (v1.3.0):${NC}"
+if [ "$MAT2_INSTALLED" = true ]; then
+    echo "  ✓ Metadata cleaning with mat2 (installed)"
+else
+    echo -e "  ${YELLOW}○ Metadata cleaning with mat2 (not installed)${NC}"
+    echo "    To enable: sudo apt install mat2"
+fi
+echo ""
+echo -e "${BLUE}New in v1.4.0:${NC}"
+echo "  ✓ Auto-generated 24-word passphrases (~215 bits entropy)"
+echo "  ✓ No manual passwords - maximum security by default"
+echo "  ✓ Auto-copy passphrase to clipboard"
+echo "  ✓ Auto-extract encrypted folders on decryption"
+echo ""
 echo -e "${YELLOW}Security note:${NC}"
-echo "  • Use strong passwords (minimum 20 characters)"
+echo "  • Passphrases are generated automatically (24 words)"
 echo "  • age uses scrypt key derivation (brute-force resistant)"
 echo "  • .age files are protected with ChaCha20-Poly1305"
 echo ""

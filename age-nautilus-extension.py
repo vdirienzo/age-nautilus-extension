@@ -355,7 +355,24 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             self._age_available = False
 
         return self._age_available
-    
+
+    def check_mat2_installed(self) -> bool:
+        """Check if mat2 (metadata anonymisation toolkit) is available.
+
+        Returns:
+            True if mat2 is available, False otherwise
+        """
+        try:
+            subprocess.run(
+                ['mat2', '--version'],
+                capture_output=True,
+                check=True,
+                timeout=2
+            )
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
     def get_file_items(self, *args) -> List:
         """Entry point for context menu items"""
         # If Nautilus was not imported correctly, don't show menu
@@ -416,9 +433,9 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
     def create_encrypt_menu_item(self, paths: List[str]) -> 'Nautilus.MenuItem':
         """Create menu item for encryption"""
         if len(paths) == 1:
-            label = "🔒 Encrypt with age"
+            label = "Encrypt with age"
         else:
-            label = f"🔒 Encrypt {len(paths)} files with age"
+            label = f"Encrypt {len(paths)} files with age"
 
         item = Nautilus.MenuItem(
             name='AgeExtension::EncryptFiles',
@@ -432,7 +449,7 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
         """Create menu item for folder encryption"""
         item = Nautilus.MenuItem(
             name='AgeExtension::EncryptFolder',
-            label='📦 Encrypt folder with age',
+            label='Encrypt folder with age',
             tip='Compress and encrypt entire folder (tar.gz + age)'
         )
         item.connect('activate', self.on_encrypt_folder, folder_path)
@@ -441,9 +458,9 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
     def create_decrypt_menu_item(self, paths: List[str]) -> 'Nautilus.MenuItem':
         """Create menu item for decryption"""
         if len(paths) == 1:
-            label = "🔓 Decrypt with age"
+            label = "Decrypt with age"
         else:
-            label = f"🔓 Decrypt {len(paths)} files with age"
+            label = f"Decrypt {len(paths)} files with age"
 
         item = Nautilus.MenuItem(
             name='AgeExtension::DecryptFiles',
@@ -470,38 +487,57 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
 
     def _do_encrypt_files(self, paths: List[str]) -> bool:
         """Actual encryption logic - runs in background thread"""
-        # Step 1: Ask password method (Generate or Manual)
-        password, was_generated = self.ask_password_method()
+        # Step 1: Generate secure passphrase (no manual option)
+        password, _ = self.ask_password_method()
         if not password:
             return False
 
-        # Step 2: If manual, ask confirmation
-        if not was_generated:
-            confirm = self.ask_password("Confirm", "Re-enter password:")
-            if confirm != password:
-                self.show_error("Error", "Passwords don't match!")
-                return False
+        # Step 2: Auto-clean metadata if mat2 is available (no prompt)
+        clean_metadata = self.check_mat2_installed()
 
         # Step 3: Ask delete original
         delete_originals = self.ask_yes_no("Delete original?",
             "Securely delete original file(s) after encryption?")
 
-        # Step 4: Encrypt
+        # Step 4: Encrypt (using temp copies if cleaning metadata)
         success_count = 0
         fail_count = 0
+        cleaned_count = 0
 
         for file_path in paths:
             if os.path.isfile(file_path):
                 encrypted_path = f"{file_path}.age"
-                if self.encrypt_file(file_path, encrypted_path, password):
+                temp_path = None
+
+                # Determine source: cleaned temp or original
+                if clean_metadata:
+                    temp_path, error = self.clean_metadata(file_path)
+                    if temp_path:
+                        encrypt_source = temp_path
+                        cleaned_count += 1
+                    else:
+                        # Fallback to original if cleaning failed
+                        logger.warning(f"Using original (clean failed): {file_path}")
+                        encrypt_source = file_path
+                else:
+                    encrypt_source = file_path
+
+                # Encrypt from source (temp or original)
+                if self.encrypt_file(encrypt_source, encrypted_path, password):
                     success_count += 1
                     if delete_originals:
                         self.secure_delete(file_path)
                 else:
                     fail_count += 1
 
+                # Cleanup temp file
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+
         if success_count > 0:
             msg = f"✅ {success_count} file(s) encrypted"
+            if clean_metadata and cleaned_count > 0:
+                msg += " (metadata cleaned)"
             if delete_originals:
                 msg += " (originals deleted)"
             self.show_notification("Done", msg)
@@ -519,24 +555,66 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
         """Actual folder encryption logic - runs in background thread"""
         folder_name = os.path.basename(folder_path)
 
-        # Step 1: Ask password method
-        password, was_generated = self.ask_password_method()
+        # Step 1: Generate secure passphrase (no manual option)
+        password, _ = self.ask_password_method()
         if not password:
             return False
 
-        # Step 2: If manual, ask confirmation
-        if not was_generated:
-            confirm = self.ask_password("Confirm", "Re-enter password:")
-            if confirm != password:
-                self.show_error("Error", "Passwords don't match!")
-                return False
+        # Step 2: Auto-clean metadata if mat2 is available (no prompt)
+        clean_metadata = self.check_mat2_installed()
 
         # Step 3: Ask delete original
         delete_original = self.ask_yes_no("Delete original?",
             f"Delete folder '{folder_name}' after encryption?")
 
-        # Step 4: Compress and encrypt
+        # Step 4: Prepare folder - use temp copy if cleaning metadata
         parent_dir = os.path.dirname(folder_path)
+        temp_dir = None
+        cleaned_count = 0
+
+        if clean_metadata:
+            # Create temp directory with copy of folder (preserves originals)
+            self.show_notification("Cleaning metadata...", f"Copying: {folder_name}")
+            try:
+                temp_dir = tempfile.mkdtemp(prefix='age_folder_')
+                temp_folder = os.path.join(temp_dir, folder_name)
+                shutil.copytree(folder_path, temp_folder)
+
+                # Clean metadata from all files in temp copy
+                for root, dirs, files in os.walk(temp_folder):
+                    for filename in files:
+                        file_path = os.path.join(root, filename)
+                        if self.validate_path(file_path):
+                            try:
+                                result = subprocess.run(
+                                    ['mat2', '--inplace', '--unknown-members', 'omit', file_path],
+                                    capture_output=True,
+                                    timeout=60
+                                )
+                                # mat2: 0=success, 1=format not supported (both OK)
+                                if result.returncode in (0, 1):
+                                    cleaned_count += 1
+                            except (subprocess.TimeoutExpired, OSError) as e:
+                                logger.warning(f"mat2 error on {file_path}: {e}")
+                        else:
+                            logger.warning(f"Skipping unsafe path: {file_path}")
+
+                if cleaned_count > 0:
+                    logger.info(f"Cleaned metadata from {cleaned_count} file(s) in temp folder")
+
+                compress_source = temp_folder
+                compress_parent = temp_dir
+            except OSError as e:
+                logger.error(f"Failed to create temp folder: {e}")
+                if temp_dir and os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                self.show_error("Error", f"Could not prepare folder: {e}")
+                return False
+        else:
+            compress_source = folder_path
+            compress_parent = parent_dir
+
+        # Step 5: Compress and encrypt
         tar_path = os.path.join(parent_dir, f"{folder_name}.tar.gz")
         encrypted_path = f"{tar_path}.age"
 
@@ -545,22 +623,25 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
         try:
             subprocess.run([
                 'tar', '-czf', tar_path,
-                '-C', parent_dir,
+                '-C', compress_parent,
                 folder_name
             ], check=True, capture_output=True)
 
             if self.encrypt_file(tar_path, encrypted_path, password):
                 os.remove(tar_path)
+                # Build notification message
+                msg = "✅ Folder encrypted"
+                if clean_metadata and cleaned_count > 0:
+                    msg += " (metadata cleaned)"
                 if delete_original:
                     # Validate path before deletion to prevent accidental damage
                     if self.validate_path(folder_path):
                         shutil.rmtree(folder_path)
-                        self.show_notification("Done", "✅ Folder encrypted and deleted")
+                        msg += " (original deleted)"
                     else:
                         logger.error(f"Refused to delete unsafe path: {folder_path}")
-                        self.show_notification("Done", "✅ Folder encrypted (original kept - unsafe path)")
-                else:
-                    self.show_notification("Done", "✅ Folder encrypted")
+                        msg += " (original kept - unsafe path)"
+                self.show_notification("Done", msg)
             else:
                 if os.path.exists(tar_path):
                     os.remove(tar_path)
@@ -568,6 +649,14 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
 
         except subprocess.CalledProcessError as e:
             self.show_error("Error", f"Compression failed: {e}")
+
+        finally:
+            # Cleanup temp directory
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                except OSError as e:
+                    logger.warning(f"Could not cleanup temp dir: {e}")
 
         return False  # Don't repeat GLib.timeout_add
 
@@ -616,22 +705,16 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
                 # Clear rate limit on successful decryption
                 self.clear_failed_attempts(file_path)
 
-                # If it's a tar.gz, ask whether to extract
+                # If it's a tar.gz, extract automatically
                 if decrypted_path.endswith('.tar.gz'):
-                    extract = self.ask_yes_no(
-                        "Extract?",
-                        "Decrypted file is an archive. Extract it?"
-                    )
-                    if extract:
-                        try:
-                            subprocess.run([
-                                'tar', '-xzf', decrypted_path,
-                                '-C', os.path.dirname(decrypted_path)
-                            ], check=True, capture_output=True)
-                            os.remove(decrypted_path)
-                            self.show_notification("Done", "✅ Archive extracted")
-                        except subprocess.CalledProcessError as e:
-                            self.show_error("Error", f"Extraction failed: {e}")
+                    try:
+                        subprocess.run([
+                            'tar', '-xzf', decrypted_path,
+                            '-C', os.path.dirname(decrypted_path)
+                        ], check=True, capture_output=True)
+                        os.remove(decrypted_path)
+                    except subprocess.CalledProcessError as e:
+                        self.show_error("Error", f"Extraction failed: {e}")
             else:
                 fail_count += 1
                 # Record failed attempt for rate limiting
@@ -826,6 +909,76 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             except OSError as rm_error:
                 logger.error(f"Fallback delete also failed: {rm_error}")
 
+    def clean_metadata(self, file_path: str) -> Tuple[Optional[str], Optional[str]]:
+        """Clean metadata from a file using mat2, preserving original.
+
+        Creates a temporary copy with cleaned metadata.
+        Caller is responsible for deleting the temp file after use.
+
+        Args:
+            file_path: Path to the original file (will NOT be modified)
+
+        Returns:
+            Tuple of (cleaned_temp_path, error_message)
+            - (path, None) if successful - path to cleaned temp file
+            - (None, "error") if failed
+        """
+        if not self.validate_path(file_path):
+            return (None, "Invalid file path")
+
+        if not os.path.isfile(file_path):
+            return (None, "Not a file")
+
+        temp_path = None
+        try:
+            # Create temp file with same extension to preserve format
+            _, ext = os.path.splitext(file_path)
+            fd, temp_path = tempfile.mkstemp(suffix=ext, prefix='age_clean_')
+            os.close(fd)
+
+            # Copy original to temp (preserves content but not necessarily all metadata)
+            shutil.copy2(file_path, temp_path)
+
+            # Clean metadata on temp copy only
+            result = subprocess.run(
+                ['mat2', '--inplace', '--unknown-members', 'omit', temp_path],
+                capture_output=True,
+                timeout=60,
+                text=True
+            )
+
+            # mat2 return codes:
+            # 0 = success (metadata cleaned)
+            # 1 = file format not supported (keep copy as-is, still use it)
+            if result.returncode in (0, 1):
+                logger.info(f"Metadata cleaned: {file_path} -> {temp_path}")
+                return (temp_path, None)
+            else:
+                # Cleanup on error
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                err_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                logger.warning(f"mat2 failed on {file_path}: {err_msg}")
+                return (None, err_msg)
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"mat2 timeout on: {file_path}")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            return (None, "Timeout cleaning metadata")
+
+        except FileNotFoundError:
+            logger.error("mat2 not found")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            return (None, "mat2 not installed")
+
+        except OSError as e:
+            logger.error(f"mat2 error on {file_path}: {e}")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            return (None, str(e))
+
     def ask_password(self, title: str, text: str) -> str:
         """Ask for a password using zenity"""
         try:
@@ -896,53 +1049,38 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
         return False
 
     def ask_password_method(self) -> Tuple[Optional[str], bool]:
-        """Ask: Generate passphrase or enter manually? Simple buttons.
+        """Generate secure passphrase for encryption.
+
+        No manual password option - always generates secure passphrase
+        for maximum security.
 
         Returns:
-            Tuple of (password, was_generated) or (None, False) if cancelled
+            Tuple of (passphrase, True) if confirmed, (None, False) if cancelled
         """
+        # Generate passphrase automatically
+        passphrase = self.generate_passphrase()
+        clipboard_ok = self.copy_to_clipboard(passphrase)
+
+        if clipboard_ok:
+            clip_msg = "📋 Passphrase copied to clipboard!"
+        else:
+            clip_msg = "⚠️ Could not copy - select and copy manually"
+
         try:
-            # Simple question with two buttons
-            result = subprocess.run(
+            confirm = subprocess.run(
                 ['zenity', '--question',
-                 '--title', '🔐 Encrypt',
-                 '--text', 'Generate secure passphrase or enter your own?',
-                 '--ok-label', '🎲 Generate',
-                 '--cancel-label', '✏️ Manual',
-                 '--width', '350'],
+                 '--title', '🔐 Secure Passphrase',
+                 '--text', f'{clip_msg}\n\n'
+                          f'<tt><b>{passphrase}</b></tt>\n\n'
+                          f'⚠️ Save this passphrase now!',
+                 '--ok-label', '🔒 Encrypt',
+                 '--cancel-label', 'Cancel',
+                 '--width', '550'],
                 timeout=300
             )
-            use_generated = (result.returncode == 0)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return (passphrase, True) if confirm.returncode == 0 else (None, False)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
             return (None, False)
-
-        if use_generated:
-            # Generate and show passphrase
-            passphrase = self.generate_passphrase()
-            clipboard_ok = self.copy_to_clipboard(passphrase)
-
-            clip_msg = "📋 Copied!" if clipboard_ok else "⚠️ Copy manually"
-
-            try:
-                confirm = subprocess.run(
-                    ['zenity', '--question',
-                     '--title', '🔐 Passphrase',
-                     '--text', f'{clip_msg}\n\n<tt><small>{passphrase}</small></tt>\n\n'
-                              f'Save this passphrase!',
-                     '--ok-label', '🔒 Encrypt',
-                     '--cancel-label', 'Cancel',
-                     '--width', '500'],
-                    timeout=300
-                )
-                if confirm.returncode == 0:
-                    return (passphrase, True)
-                return (None, False)
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                return (None, False)
-        else:
-            # Manual password
-            password = self.ask_password("Password", "Enter encryption password:")
-            return (password, False) if password else (None, False)
 
     def ask_yes_no(self, title: str, text: str) -> bool:
         """Ask yes/no question using zenity"""

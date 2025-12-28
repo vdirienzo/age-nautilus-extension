@@ -2,7 +2,7 @@
 
 Complete Nautilus (GNOME Files) extension for encrypting and decrypting files using **age** (Actually Good Encryption).
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/badge/version-1.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.8+-yellow)
 
@@ -20,6 +20,7 @@ Complete Nautilus (GNOME Files) extension for encrypting and decrypting files us
 - **📦 Automatic extraction** - Decompresses encrypted folders automatically
 - **🔔 Notifications** - System notifications when operations complete
 - **🎨 Intuitive interface** - Native GTK dialogs with passphrase generation
+- **🧹 Auto metadata cleaning** - Automatically removes EXIF, author, dates (originals preserved)
 
 ### 🛡️ Security
 
@@ -59,6 +60,9 @@ All are installed automatically:
 - `zenity` - Graphical dialogs
 - `libnotify-bin` - System notifications
 - `coreutils` - Basic utilities (includes `shred`)
+
+### Optional Dependencies
+- `mat2` - Metadata cleaning tool (for privacy-focused encryption)
 
 ## 🚀 Installation
 
@@ -100,48 +104,91 @@ nautilus -q
 
 1. Open Nautilus (GNOME Files)
 2. Navigate to your file
-3. **Right-click** → **"🔒 Encrypt with age"**
-4. Enter your password (twice to confirm)
-5. Optionally, accept deleting the original file
-6. ✅ Creates `file.ext.age`
+3. **Right-click** → **"Encrypt with age"**
+4. A secure 24-word passphrase is generated and copied to clipboard
+5. **Save the passphrase** in a password manager
+6. Click **Encrypt** - optionally delete the original
+7. ✅ Creates `file.ext.age`
 
 ### Encrypt multiple files
 
 1. **Select multiple files** (Ctrl + Click)
-2. **Right-click** → **"🔒 Encrypt N files with age"**
-3. Enter password
-4. All files are encrypted with the same password
+2. **Right-click** → **"Encrypt N files with age"**
+3. Save the generated passphrase
+4. All files are encrypted with the same passphrase
 
 ### Encrypt a complete folder
 
-1. **Right-click on a folder** → **"📦 Encrypt folder with age"**
-2. Enter password
+1. **Right-click on a folder** → **"Encrypt folder with age"**
+2. Save the generated passphrase
 3. Creates `folder.tar.gz.age` (compressed and encrypted)
 4. Optionally, accept deleting the original folder
 
 ### Decrypt files
 
-1. **Right-click on .age file** → **"🔓 Decrypt with age"**
-2. Enter your password
+1. **Right-click on .age file** → **"Decrypt with age"**
+2. Enter your passphrase
 3. Original file is recovered
-4. If it's a folder (`.tar.gz`), asks if you want to extract it
+4. If it's a folder (`.tar.gz`), it's automatically extracted
 
-### 🎲 Using the Passphrase Generator
+### 🎲 Secure Passphrase (Automatic)
 
-When encrypting files or folders, you can generate a secure passphrase instead of typing one manually:
+When encrypting files or folders, a **secure passphrase is automatically generated** - no manual passwords allowed for maximum security:
 
-1. **Click "🎲 Generate Passphrase"** in the password dialog
-2. A secure passphrase like `tiger-ocean-mountain-castle` is generated
+1. Right-click and select **"Encrypt with age"**
+2. A secure 24-word passphrase is generated automatically
 3. The passphrase is **automatically copied to clipboard**
-4. Click **OK** to encrypt (no confirmation needed for generated passphrases)
+4. **SAVE IT NOW** in a password manager before clicking Encrypt
 
-**Benefits:**
-- **Secure**: Uses cryptographically secure random selection (`secrets` module)
-- **Memorable**: 4 random words are easier to remember than random characters
-- **Strong**: ~62 billion combinations (500^4) makes brute-force impractical
-- **Fast**: No need to type the same password twice
+**Security features:**
+- **Cryptographically secure**: Uses Python `secrets` module (CSPRNG)
+- **24 words**: ~215 bits of entropy - impossible to brute-force
+- **No weak passwords**: Manual entry disabled - can't use "123456"
+- **One-click flow**: No need to type or confirm anything
 
-**Tip**: Save the generated passphrase in a password manager immediately!
+**The passphrase dialog shows:**
+```
+📋 Passphrase copied to clipboard!
+
+tiger-ocean-mountain-castle-brave-silent-...
+
+⚠️ Save this passphrase now!
+
+[🔒 Encrypt]    [Cancel]
+```
+
+### 🧹 Automatic Metadata Cleaning
+
+When `mat2` is installed, metadata is **automatically cleaned** before encryption:
+
+- **No prompts needed** - cleaning happens silently in the background
+- **Original files preserved** - metadata is cleaned from temporary copies only
+- **Encrypted output** - the `.age` file contains metadata-free content
+- **Your originals are safe** - they keep all their metadata untouched
+
+**What gets cleaned:**
+- **Photos**: EXIF data (GPS location, camera model, timestamps)
+- **Documents**: Author name, company, creation/modification dates
+- **PDFs**: Metadata, comments, revision history
+- **Audio**: ID3 tags, artist, album information
+- **Video**: Creation dates, camera info, GPS
+
+**Supported formats** (via mat2):
+- Images: JPEG, PNG, GIF, BMP, TIFF
+- Documents: DOCX, XLSX, PPTX, ODT, ODS, ODP
+- PDFs: PDF files
+- Audio: MP3, FLAC, OGG
+- Video: MP4, AVI, MKV
+- Archives: ZIP, TAR
+
+**Requirements:**
+- `mat2` must be installed: `sudo apt install mat2`
+- If not installed, encryption proceeds without metadata cleaning (no warning)
+
+**Why clean metadata?**
+- Photos can reveal your location (GPS), camera, and when they were taken
+- Documents often contain your name, company, and edit history
+- Cleaning metadata protects your privacy when sharing encrypted files
 
 ## 🎯 Use Case Examples
 
@@ -316,6 +363,23 @@ Found a bug? Have an idea for improvement?
 5. Open a Pull Request
 
 ## 📝 Changelog
+
+### v1.4.0 (2025-12-28)
+- 🔐 **Passphrase Only**: Removed manual password option - only auto-generated passphrases allowed
+- 📋 **Improved Clipboard UI**: Clear message "Passphrase copied to clipboard!" with save instructions
+- 🛡️ **Maximum Security**: Impossible to use weak passwords - always 24-word passphrase (~215 bits)
+- ⚡ **Simpler Flow**: One-click encryption without password confirmation dialogs
+- ✅ **Security Verified**: mat2 execution confirmed secure (no shell injection possible)
+- 🧹 **Clean Menus**: Removed emojis from context menu items for cleaner UI
+- 📦 **Auto-Extract Folders**: Encrypted folders (.tar.gz) are automatically extracted on decryption
+- 💬 **Compact UI**: Shortened warning messages for cleaner dialog appearance
+
+### v1.3.0 (2025-12-28)
+- 🧹 **Automatic Metadata Cleaning**: Silently removes EXIF, author, dates, GPS before encryption
+- 🔒 **Originals Preserved**: Cleans temporary copies only - your files keep their metadata
+- 📦 **Folder Support**: Recursively clean all files in a folder before compression
+- ⚡ **Zero Prompts**: No questions asked - if mat2 is installed, cleaning is automatic
+- 🛡️ **Path Validation**: All cleaned files validated for security
 
 ### v1.2.0 (2025-12-28)
 - 🛡️ **Security Audit**: Complete security review with Semgrep - 0 vulnerabilities
