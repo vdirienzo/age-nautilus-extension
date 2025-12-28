@@ -1,8 +1,8 @@
 #!/bin/bash
-# install-age-nautilus.sh
-# Installation script for the age Nautilus extension
+# install.sh
+# Installation script for the Nautilus AGE Encryption extension
 #
-# Usage: ./install-age-nautilus.sh
+# Usage: ./install.sh
 
 set -e
 
@@ -105,12 +105,12 @@ print_success "Directory created: $EXTENSION_DIR"
 print_status "Installing extension..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [ -f "$SCRIPT_DIR/age-nautilus-extension.py" ]; then
-    cp "$SCRIPT_DIR/age-nautilus-extension.py" "$EXTENSION_DIR/"
-    chmod +x "$EXTENSION_DIR/age-nautilus-extension.py"
-    print_success "Extension installed at: $EXTENSION_DIR/age-nautilus-extension.py"
+if [ -f "$SCRIPT_DIR/nautilus-age-extension.py" ]; then
+    cp "$SCRIPT_DIR/nautilus-age-extension.py" "$EXTENSION_DIR/"
+    chmod +x "$EXTENSION_DIR/nautilus-age-extension.py"
+    print_success "Extension installed at: $EXTENSION_DIR/nautilus-age-extension.py"
 else
-    print_error "age-nautilus-extension.py not found"
+    print_error "nautilus-age-extension.py not found"
     print_error "Make sure to run this script from the correct directory"
     exit 1
 fi
@@ -169,8 +169,8 @@ echo "  • age uses scrypt key derivation (brute-force resistant)"
 echo "  • .age files are protected with ChaCha20-Poly1305"
 echo ""
 echo -e "${BLUE}To uninstall:${NC}"
-echo "  rm $EXTENSION_DIR/age-nautilus-extension.py"
-echo "  nautilus -q"
+echo "  ./uninstall.sh"
+echo "  # or: rm $EXTENSION_DIR/nautilus-age-extension.py && nautilus -q"
 echo ""
 print_success "Enjoy secure encryption with age! 🔐"
 echo ""

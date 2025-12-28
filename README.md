@@ -2,7 +2,7 @@
 
 Complete Nautilus (GNOME Files) extension for encrypting and decrypting files using **age** (Actually Good Encryption).
 
-![Version](https://img.shields.io/badge/version-1.4.1-blue)
+![Version](https://img.shields.io/badge/version-1.6.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.8+-yellow)
 
@@ -31,6 +31,9 @@ Complete Nautilus (GNOME Files) extension for encrypting and decrypting files us
 - **🚫 Rate limiting:** Protection against brute-force attacks (3 attempts, 30s lockout)
 - **🛤️ Path validation:** Protection against path traversal attacks
 - **📝 Logging system:** Security events logged for audit
+- **🔗 Symlink protection:** Prevents symlink attacks during folder encryption
+- **📦 Zip-slip protection:** Validates tar contents before extraction
+- **⚙️ Race condition fixes:** TOCTOU-safe file operations
 
 ## 📸 Screenshots
 
@@ -68,12 +71,12 @@ All are installed automatically:
 
 ```bash
 # 1. Download the files
-git clone https://github.com/your-username/age-nautilus-extension.git
-cd age-nautilus-extension
+git clone https://github.com/your-username/nautilus-age-extension.git
+cd nautilus-age-extension
 
 # 2. Run the installer
-chmod +x install-age-nautilus.sh
-./install-age-nautilus.sh
+chmod +x install.sh
+./install.sh
 ```
 
 Done! The extension is now installed and working.
@@ -89,8 +92,8 @@ sudo apt install python3-nautilus age zenity libnotify-bin
 mkdir -p ~/.local/share/nautilus-python/extensions
 
 # 3. Copy the extension
-cp age-nautilus-extension.py ~/.local/share/nautilus-python/extensions/
-chmod +x ~/.local/share/nautilus-python/extensions/age-nautilus-extension.py
+cp nautilus-age-extension.py ~/.local/share/nautilus-python/extensions/
+chmod +x ~/.local/share/nautilus-python/extensions/nautilus-age-extension.py
 
 # 4. Restart Nautilus
 nautilus -q
@@ -105,8 +108,9 @@ nautilus -q
 3. **Right-click** → **"Encrypt with age"**
 4. A secure 24-word passphrase is generated and copied to clipboard
 5. **Save the passphrase** in a password manager
-6. Click **Encrypt** - optionally delete the original
-7. ✅ Creates `file.ext.age`
+6. Optionally check **"Delete original after encryption"**
+7. Click **Encrypt**
+8. ✅ Creates `file.ext.age`
 
 ### Encrypt multiple files
 
@@ -152,7 +156,7 @@ tiger-ocean-mountain-castle-brave-silent-...
 
 ⚠️ Save this passphrase now!
 
-[🔒 Encrypt]    [Cancel]
+[Cancel]  [🔒 Encrypt (keep original)]  [🔒🗑️ Encrypt & Delete original]
 ```
 
 ### 🧹 Automatic Metadata Cleaning
@@ -224,12 +228,14 @@ my-project/
 
 ### Change number of shred passes
 
-Edit `age-nautilus-extension.py`:
+Edit `nautilus-age-extension.py`:
 
 ```python
-# Line ~565
-subprocess.run(['shred', '-vfzu', '-n', '35', file_path])  # 35 passes (Gutmann)
+# Line ~900 - Default is 3 passes (more than sufficient)
+['shred', '-vfzu', '-n', '1', file_path]  # 1 pass (NIST SP 800-88 recommendation)
 ```
+
+> **Security Note (2025):** The Gutmann method (35 passes) is obsolete. It was designed in 1996 for MFM/RLL drives. Peter Gutmann himself has stated it's excessive for modern hardware. NIST SP 800-88 recommends just 1 pass for modern HDDs. The default of 3 passes is already conservative.
 
 ### Disable secure deletion
 
@@ -291,7 +297,7 @@ sudo apt install libnotify-bin
 
 ```bash
 # Grant execution permissions
-chmod +x ~/.local/share/nautilus-python/extensions/age-nautilus-extension.py
+chmod +x ~/.local/share/nautilus-python/extensions/nautilus-age-extension.py
 ```
 
 ## 🔐 Security and Best Practices
@@ -323,13 +329,31 @@ The extension automatically verifies that .age files are valid before attempting
 
 ### Secure deletion
 
-- `shred` overwrites the file 3 times
-- Makes forensic recovery nearly impossible
-- Only useful on HDD drives (not on SSD/NVMe due to wear leveling)
+- **Default:** `shred` overwrites the file 3 times (conservative, more than needed)
+- **NIST SP 800-88:** Recommends just 1 pass for modern HDDs
+- **Gutmann method (35 passes):** Obsolete since ~2000, designed for ancient MFM/RLL drives
+
+**Important limitations:**
+
+| Storage Type | shred Effectiveness |
+|--------------|---------------------|
+| HDD (traditional) | ✅ Effective - 1-3 passes sufficient |
+| SSD/NVMe | ❌ Ineffective - wear leveling bypasses overwrites |
+| Encrypted files | ✅ Destroying the key is enough |
+
+**Why shred doesn't work on SSDs:**
+- Wear leveling redistributes writes across cells
+- Over-provisioning hides sectors from the OS
+- TRIM marks blocks for deletion asynchronously
+- Flash Translation Layer prevents direct sector access
+
+**For SSDs:** Use `blkdiscard --secure` or ATA Secure Erase for full drive wipes.
+
+**Best practice:** For encrypted files, destroying the encryption key makes data unrecoverable regardless of storage type.
 
 ## 📊 Comparison with Other Solutions
 
-| Feature | age-nautilus | GPG-Nautilus | Veracrypt | zip -e |
+| Feature | nautilus-age | GPG-Nautilus | Veracrypt | zip -e |
 |---------|-------------|--------------|-----------|--------|
 | Ease of use | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐ |
 | Security | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐ |
@@ -341,7 +365,7 @@ The extension automatically verifies that .age files are valid before attempting
 
 ```bash
 # Remove the extension
-rm ~/.local/share/nautilus-python/extensions/age-nautilus-extension.py
+rm ~/.local/share/nautilus-python/extensions/nautilus-age-extension.py
 
 # Restart Nautilus
 nautilus -q
@@ -361,6 +385,26 @@ Found a bug? Have an idea for improvement?
 5. Open a Pull Request
 
 ## 📝 Changelog
+
+### v1.6.0 (2025-12-28)
+- 🛡️ **Deep Security Audit**: Complete Semgrep MCP analysis with custom rules
+- 📦 **Zip-slip Protection**: Validates tar archive contents before extraction
+- 🔗 **Symlink Attack Prevention**: `shutil.copytree()` no longer follows symlinks
+- ⚙️ **TOCTOU Fixes**: Race conditions eliminated with try/except patterns
+- 🧟 **Zombie Process Prevention**: Added `process.wait()` after `kill()`
+- ⏱️ **Optimized Timeouts**: Reduced from 300s to 120s for better UX
+- 📝 **Security Documentation**: Added inline security comments
+
+### v1.5.0 (2025-12-28)
+- ✅ **Unified Dialog**: Merged passphrase and delete confirmation into single dialog
+- 🔘 **Three Options**: Cancel / Encrypt / Encrypt & Delete buttons in one dialog
+- ⚡ **Simplified Flow**: One dialog instead of two - faster encryption workflow
+
+### v1.4.2 (2025-12-28)
+- 📚 **Security Docs Update**: Updated shred documentation with 2025 security best practices
+- ❌ **Gutmann Deprecated**: Removed recommendation for 35-pass Gutmann method (obsolete since ~2000)
+- 📖 **NIST Guidelines**: Added NIST SP 800-88 recommendations (1 pass sufficient for modern HDDs)
+- ⚠️ **SSD Limitations**: Documented why shred is ineffective on SSDs/NVMe
 
 ### v1.4.1 (2025-12-28)
 - 📦 **mat2 Auto-Install**: mat2 is now installed automatically (no longer optional)

@@ -1,6 +1,6 @@
 #!/bin/bash
-# uninstall-age-nautilus.sh
-# Uninstallation script for the age Nautilus extension
+# uninstall.sh
+# Uninstallation script for the Nautilus AGE Encryption extension
 
 set -e
 
@@ -17,7 +17,7 @@ echo "║   AGE ENCRYPTION - Nautilus Extension Uninstaller    ║"
 echo "╚═══════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
-EXTENSION_FILE="$HOME/.local/share/nautilus-python/extensions/age-nautilus-extension.py"
+EXTENSION_FILE="$HOME/.local/share/nautilus-python/extensions/nautilus-age-extension.py"
 
 # Check if extension is installed
 if [ ! -f "$EXTENSION_FILE" ]; then

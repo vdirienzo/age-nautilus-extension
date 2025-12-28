@@ -1,6 +1,6 @@
 #!/bin/bash
-# test-age-nautilus.sh
-# Verification script for the Nautilus extension
+# test.sh
+# Verification script for the Nautilus AGE Encryption extension
 
 set -e
 
@@ -99,13 +99,13 @@ echo ""
 
 echo -e "${BLUE}[3/6] Checking extension files...${NC}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-test_file "$SCRIPT_DIR/age-nautilus-extension.py" "Extension file"
-test_file "$SCRIPT_DIR/install-age-nautilus.sh" "Install script"
+test_file "$SCRIPT_DIR/nautilus-age-extension.py" "Extension file"
+test_file "$SCRIPT_DIR/install.sh" "Install script"
 test_file "$SCRIPT_DIR/README.md" "Documentation"
 echo ""
 
 echo -e "${BLUE}[4/6] Checking extension installation...${NC}"
-EXTENSION_FILE="$HOME/.local/share/nautilus-python/extensions/age-nautilus-extension.py"
+EXTENSION_FILE="$HOME/.local/share/nautilus-python/extensions/nautilus-age-extension.py"
 if [ -f "$EXTENSION_FILE" ]; then
     echo -e "Extension installed: ${GREEN}✓${NC}"
     ((PASSED++))
@@ -184,7 +184,7 @@ if [ $FAILED -eq 0 ]; then
     echo -e "${GREEN}The extension is ready to use!${NC}"
     echo ""
     if [ ! -f "$EXTENSION_FILE" ]; then
-        echo -e "${YELLOW}Run ./install-age-nautilus.sh to install it${NC}"
+        echo -e "${YELLOW}Run ./install.sh to install it${NC}"
     else
         echo -e "Open Nautilus and you will see the encryption options"
     fi
@@ -210,7 +210,7 @@ else
         echo "  • Install python3-nautilus: sudo apt install python3-nautilus"
     fi
     echo ""
-    echo "Or simply run: ./install-age-nautilus.sh"
+    echo "Or simply run: ./install.sh"
     echo ""
     exit 1
 fi

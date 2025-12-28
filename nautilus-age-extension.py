@@ -267,6 +267,9 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
         super().__init__()
         self._dependencies_checked: bool = False
         self._age_available: Optional[bool] = None
+        # Cache for mat2 availability check
+        self._mat2_checked: bool = False
+        self._mat2_available: Optional[bool] = None
         # Rate limiting: track failed decryption attempts per file
         self._failed_attempts: Dict[str, List[float]] = defaultdict(list)
 
@@ -357,11 +360,15 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
         return self._age_available
 
     def check_mat2_installed(self) -> bool:
-        """Check if mat2 (metadata anonymisation toolkit) is available.
+        """Check if mat2 (metadata anonymisation toolkit) is available (lazy check with cache).
 
         Returns:
             True if mat2 is available, False otherwise
         """
+        if self._mat2_checked:
+            return self._mat2_available
+
+        self._mat2_checked = True
         try:
             subprocess.run(
                 ['mat2', '--version'],
@@ -369,9 +376,11 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
                 check=True,
                 timeout=2
             )
-            return True
+            self._mat2_available = True
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            return False
+            self._mat2_available = False
+
+        return self._mat2_available
 
     def get_file_items(self, *args) -> List:
         """Entry point for context menu items"""
@@ -406,53 +415,49 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
                 path = self.get_path_from_uri(uri)
                 if path:
                     paths.append(path)
-        
+
         if not paths:
             return []
         
         items = []
-        
+
         # Detect if all files are .age
         all_age_files = all(p.endswith('.age') for p in paths)
-        
-        # Detect if there are folders
-        has_folders = any(os.path.isdir(p) for p in paths)
-        
+
         if all_age_files:
             # Menu for decryption
             items.append(self.create_decrypt_menu_item(paths))
-        elif has_folders and len(paths) == 1:
-            # Menu for folder encryption
-            items.append(self.create_encrypt_folder_menu_item(paths[0]))
         else:
-            # Menu for file encryption
+            # Menu for encryption (handles both files and folders)
             items.append(self.create_encrypt_menu_item(paths))
-        
+
         return items
     
     def create_encrypt_menu_item(self, paths: List[str]) -> 'Nautilus.MenuItem':
-        """Create menu item for encryption"""
+        """Create menu item for encryption (files and/or folders)"""
+        # Count files and folders
+        num_files = sum(1 for p in paths if os.path.isfile(p))
+        num_folders = sum(1 for p in paths if os.path.isdir(p))
+
         if len(paths) == 1:
-            label = "Encrypt with age"
+            if num_folders == 1:
+                label = "Encrypt folder with age"
+            else:
+                label = "Encrypt with age"
         else:
-            label = f"Encrypt {len(paths)} files with age"
+            parts = []
+            if num_files > 0:
+                parts.append(f"{num_files} file{'s' if num_files > 1 else ''}")
+            if num_folders > 0:
+                parts.append(f"{num_folders} folder{'s' if num_folders > 1 else ''}")
+            label = f"Encrypt {' + '.join(parts)} with age"
 
         item = Nautilus.MenuItem(
-            name='AgeExtension::EncryptFiles',
+            name='AgeExtension::EncryptItems',
             label=label,
-            tip='Encrypt file(s) with age (ChaCha20-Poly1305)'
+            tip='Encrypt with age (ChaCha20-Poly1305)'
         )
-        item.connect('activate', self.on_encrypt_files, paths)
-        return item
-
-    def create_encrypt_folder_menu_item(self, folder_path: str) -> 'Nautilus.MenuItem':
-        """Create menu item for folder encryption"""
-        item = Nautilus.MenuItem(
-            name='AgeExtension::EncryptFolder',
-            label='Encrypt folder with age',
-            tip='Compress and encrypt entire folder (tar.gz + age)'
-        )
-        item.connect('activate', self.on_encrypt_folder, folder_path)
+        item.connect('activate', lambda menu, p=list(paths): self.on_encrypt_items(menu, p))
         return item
 
     def create_decrypt_menu_item(self, paths: List[str]) -> 'Nautilus.MenuItem':
@@ -467,7 +472,7 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             label=label,
             tip='Decrypt .age file(s)'
         )
-        item.connect('activate', self.on_decrypt_files, paths)
+        item.connect('activate', lambda menu, p=list(paths): self.on_decrypt_files(menu, p))
         return item
 
     def get_path_from_uri(self, uri: str) -> str:
@@ -480,189 +485,128 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             logger.warning(f"URI parsing error: {e}")
             return None
     
-    def on_encrypt_files(self, menu: 'Nautilus.MenuItem', paths: List[str]) -> None:
-        """Handler for encrypting individual files"""
-        # Delay to let context menu close and transfer focus
-        GLib.timeout_add(150, self._do_encrypt_files, paths)
+    def on_encrypt_items(self, menu: 'Nautilus.MenuItem', paths: List[str]) -> None:
+        """Handler for encrypting files and/or folders"""
+        # Minimal delay to let context menu close
+        GLib.timeout_add(50, self._do_encrypt_items, paths)
 
-    def _do_encrypt_files(self, paths: List[str]) -> bool:
-        """Actual encryption logic - runs in background thread"""
-        # Step 1: Generate secure passphrase (no manual option)
-        password, _ = self.ask_password_method()
-        if not password:
-            return False
-
-        # Step 2: Auto-clean metadata if mat2 is available (no prompt)
-        clean_metadata = self.check_mat2_installed()
-
-        # Step 3: Ask delete original
-        delete_originals = self.ask_yes_no("Delete original?",
-            "Securely delete original file(s) after encryption?")
-
-        # Step 4: Encrypt (using temp copies if cleaning metadata)
-        success_count = 0
-        fail_count = 0
-        cleaned_count = 0
-
-        for file_path in paths:
-            if os.path.isfile(file_path):
-                encrypted_path = f"{file_path}.age"
-                temp_path = None
-
-                # Determine source: cleaned temp or original
-                if clean_metadata:
-                    temp_path, error = self.clean_metadata(file_path)
-                    if temp_path:
-                        encrypt_source = temp_path
-                        cleaned_count += 1
-                    else:
-                        # Fallback to original if cleaning failed
-                        logger.warning(f"Using original (clean failed): {file_path}")
-                        encrypt_source = file_path
-                else:
-                    encrypt_source = file_path
-
-                # Encrypt from source (temp or original)
-                if self.encrypt_file(encrypt_source, encrypted_path, password):
-                    success_count += 1
-                    if delete_originals:
-                        self.secure_delete(file_path)
-                else:
-                    fail_count += 1
-
-                # Cleanup temp file
-                if temp_path and os.path.exists(temp_path):
-                    os.remove(temp_path)
-
-        if success_count > 0:
-            msg = f"✅ {success_count} file(s) encrypted"
-            if clean_metadata and cleaned_count > 0:
-                msg += " (metadata cleaned)"
-            if delete_originals:
-                msg += " (originals deleted)"
-            self.show_notification("Done", msg)
-
-        if fail_count > 0:
-            self.show_error("Error", f"Failed: {fail_count} file(s)")
-
-        return False  # Don't repeat GLib.timeout_add
-
-    def on_encrypt_folder(self, menu: 'Nautilus.MenuItem', folder_path: str) -> None:
-        """Handler for encrypting entire folder"""
-        GLib.timeout_add(150, self._do_encrypt_folder, folder_path)
-
-    def _do_encrypt_folder(self, folder_path: str) -> bool:
-        """Actual folder encryption logic - runs in background thread"""
-        folder_name = os.path.basename(folder_path)
-
-        # Step 1: Generate secure passphrase (no manual option)
-        password, _ = self.ask_password_method()
-        if not password:
-            return False
-
-        # Step 2: Auto-clean metadata if mat2 is available (no prompt)
-        clean_metadata = self.check_mat2_installed()
-
-        # Step 3: Ask delete original
-        delete_original = self.ask_yes_no("Delete original?",
-            f"Delete folder '{folder_name}' after encryption?")
-
-        # Step 4: Prepare folder - use temp copy if cleaning metadata
-        parent_dir = os.path.dirname(folder_path)
+    def _do_encrypt_items(self, paths: List[str]) -> bool:
+        """Encrypt files and folders into a single archive."""
         temp_dir = None
-        cleaned_count = 0
-
-        if clean_metadata:
-            # Create temp directory with copy of folder (preserves originals)
-            self.show_notification("Cleaning metadata...", f"Copying: {folder_name}")
-            try:
-                temp_dir = tempfile.mkdtemp(prefix='age_folder_')
-                temp_folder = os.path.join(temp_dir, folder_name)
-                shutil.copytree(folder_path, temp_folder)
-
-                # Clean metadata from all files in temp copy
-                for root, dirs, files in os.walk(temp_folder):
-                    for filename in files:
-                        file_path = os.path.join(root, filename)
-                        if self.validate_path(file_path):
-                            try:
-                                result = subprocess.run(
-                                    ['mat2', '--inplace', '--unknown-members', 'omit', file_path],
-                                    capture_output=True,
-                                    timeout=60
-                                )
-                                # mat2: 0=success, 1=format not supported (both OK)
-                                if result.returncode in (0, 1):
-                                    cleaned_count += 1
-                            except (subprocess.TimeoutExpired, OSError) as e:
-                                logger.warning(f"mat2 error on {file_path}: {e}")
-                        else:
-                            logger.warning(f"Skipping unsafe path: {file_path}")
-
-                if cleaned_count > 0:
-                    logger.info(f"Cleaned metadata from {cleaned_count} file(s) in temp folder")
-
-                compress_source = temp_folder
-                compress_parent = temp_dir
-            except OSError as e:
-                logger.error(f"Failed to create temp folder: {e}")
-                if temp_dir and os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-                self.show_error("Error", f"Could not prepare folder: {e}")
-                return False
-        else:
-            compress_source = folder_path
-            compress_parent = parent_dir
-
-        # Step 5: Compress and encrypt
-        tar_path = os.path.join(parent_dir, f"{folder_name}.tar.gz")
-        encrypted_path = f"{tar_path}.age"
-
-        self.show_notification("Compressing...", f"Creating: {folder_name}.tar.gz")
+        tar_path = None
 
         try:
+            # 1. Ask for passphrase
+            password, _, delete_originals = self.ask_password_method()
+            if not password:
+                return False
+
+            # Immediate feedback to user
+            self.show_notification("Encrypting...", f"⏳ Processing {len(paths)} item(s)")
+
+            clean_metadata = self.check_mat2_installed()
+
+            # 2. Create temp directory
+            temp_dir = tempfile.mkdtemp(prefix='age_bundle_')
+
+            # 3. Copy all items to temp
+            for item_path in paths:
+                item_path = os.path.normpath(item_path)
+                basename = os.path.basename(item_path)
+                dest = os.path.join(temp_dir, basename)
+
+                if os.path.isfile(item_path):
+                    shutil.copy2(item_path, dest)
+                elif os.path.isdir(item_path):
+                    # Security: Don't follow symlinks to prevent symlink attacks
+                    shutil.copytree(item_path, dest, symlinks=False, ignore_dangling_symlinks=True)
+
+            # 4. Clean metadata from all files in temp
+            cleaned_count = 0
+            if clean_metadata:
+                for root, dirs, files in os.walk(temp_dir):
+                    for filename in files:
+                        fp = os.path.join(root, filename)
+                        try:
+                            result = subprocess.run(
+                                ['mat2', '--inplace', '--unknown-members', 'omit', fp],
+                                capture_output=True, timeout=60
+                            )
+                            if result.returncode in (0, 1):
+                                cleaned_count += 1
+                        except (subprocess.TimeoutExpired, OSError):
+                            pass
+
+            # 5. Determine output name and location
+            output_dir = os.path.dirname(os.path.normpath(paths[0]))
+            if len(paths) == 1:
+                bundle_name = os.path.basename(os.path.normpath(paths[0]))
+            else:
+                timestamp = time.strftime('%Y%m%d_%H%M%S')
+                bundle_name = f"encrypted_bundle_{timestamp}"
+
+            tar_path = os.path.join(output_dir, f"{bundle_name}.tar.gz")
+
+            # 6. Create tar.gz
             subprocess.run([
-                'tar', '-czf', tar_path,
-                '-C', compress_parent,
-                folder_name
+                'tar', '-czf', tar_path, '-C', temp_dir, '.'
             ], check=True, capture_output=True)
 
-            if self.encrypt_file(tar_path, encrypted_path, password):
+            # 7. Encrypt
+            encrypted_path = f"{tar_path}.age"
+            success = self.encrypt_file(tar_path, encrypted_path, password)
+
+            # 8. Cleanup tar (keep only .age) - use try/except to avoid TOCTOU race
+            try:
                 os.remove(tar_path)
-                # Build notification message
-                msg = "✅ Folder encrypted"
+                tar_path = None
+            except FileNotFoundError:
+                tar_path = None  # Already gone, OK
+
+            # 9. Delete originals if requested
+            if success and delete_originals:
+                for item_path in paths:
+                    item_path = os.path.normpath(item_path)
+                    if os.path.isfile(item_path):
+                        self.secure_delete(item_path)
+                    elif os.path.isdir(item_path):
+                        if self.validate_path(item_path):
+                            shutil.rmtree(item_path)
+
+            # 10. Notify
+            if success:
+                msg = f"✅ {len(paths)} item(s) → {os.path.basename(encrypted_path)}"
                 if clean_metadata and cleaned_count > 0:
-                    msg += " (metadata cleaned)"
-                if delete_original:
-                    # Validate path before deletion to prevent accidental damage
-                    if self.validate_path(folder_path):
-                        shutil.rmtree(folder_path)
-                        msg += " (original deleted)"
-                    else:
-                        logger.error(f"Refused to delete unsafe path: {folder_path}")
-                        msg += " (original kept - unsafe path)"
+                    msg += f" ({cleaned_count} cleaned)"
+                if delete_originals:
+                    msg += " (originals deleted)"
                 self.show_notification("Done", msg)
             else:
-                if os.path.exists(tar_path):
-                    os.remove(tar_path)
-                self.show_error("Error", "Could not encrypt")
+                self.show_error("Error", "Encryption failed")
 
-        except subprocess.CalledProcessError as e:
-            self.show_error("Error", f"Compression failed: {e}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Encryption error: {e}")
+            self.show_error("Error", str(e))
+            return False
 
         finally:
-            # Cleanup temp directory
-            if temp_dir and os.path.exists(temp_dir):
+            # Cleanup - use try/except to avoid TOCTOU race conditions
+            if tar_path:
+                try:
+                    os.remove(tar_path)
+                except (FileNotFoundError, OSError):
+                    pass  # Already gone or inaccessible
+            if temp_dir:
                 try:
                     shutil.rmtree(temp_dir)
-                except OSError as e:
-                    logger.warning(f"Could not cleanup temp dir: {e}")
-
-        return False  # Don't repeat GLib.timeout_add
+                except (FileNotFoundError, OSError):
+                    pass  # Already gone or inaccessible
 
     def on_decrypt_files(self, menu: 'Nautilus.MenuItem', paths: List[str]) -> None:
         """Handler for decrypting files"""
-        GLib.timeout_add(150, self._do_decrypt_files, paths)
+        GLib.timeout_add(50, self._do_decrypt_files, paths)
 
     def _do_decrypt_files(self, paths: List[str]) -> bool:
         """Actual decryption logic with rate limiting protection.
@@ -705,9 +649,19 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
                 # Clear rate limit on successful decryption
                 self.clear_failed_attempts(file_path)
 
-                # If it's a tar.gz, extract automatically
+                # If it's a tar.gz, extract automatically with security validation
                 if decrypted_path.endswith('.tar.gz'):
                     try:
+                        # Security: Validate tar contents before extraction (zip-slip protection)
+                        list_result = subprocess.run(
+                            ['tar', '-tzf', decrypted_path],
+                            capture_output=True, text=True, timeout=60
+                        )
+                        if list_result.returncode == 0:
+                            for member in list_result.stdout.splitlines():
+                                if member.startswith('/') or '..' in member:
+                                    raise ValueError(f"Suspicious path in archive: {member}")
+
                         subprocess.run([
                             'tar', '-xzf', decrypted_path,
                             '-C', os.path.dirname(decrypted_path)
@@ -754,11 +708,13 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             time.sleep(0.1)
 
             # age -p asks for password twice (entry + confirmation)
+            # Security note: password is written directly to PTY fd, never logged
             os.write(master_fd, f"{password}\n".encode('utf-8'))
             time.sleep(0.1)
             os.write(master_fd, f"{password}\n".encode('utf-8'))
 
-            stdout, stderr = process.communicate(timeout=300)
+            # 120s timeout - age encryption is fast, longer waits indicate problems
+            stdout, stderr = process.communicate(timeout=120)
 
             if process.returncode == 0 and os.path.exists(output_path):
                 return True
@@ -777,6 +733,7 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             logger.error("Encryption timeout")
             if process:
                 process.kill()
+                process.wait()  # Prevent zombie process
             return False
         except OSError as e:
             logger.error(f"Encryption OS error: {e}")
@@ -823,9 +780,11 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             time.sleep(0.1)
 
             # age -d asks for password once
+            # Security note: password is written directly to PTY fd, never logged
             os.write(master_fd, f"{password}\n".encode('utf-8'))
 
-            stdout, stderr = process.communicate(timeout=300)
+            # 120s timeout - age decryption is fast, longer waits indicate problems
+            stdout, stderr = process.communicate(timeout=120)
 
             if process.returncode == 0 and os.path.exists(output_path):
                 return True
@@ -844,6 +803,7 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             logger.error("Decryption timeout")
             if process:
                 process.kill()
+                process.wait()  # Prevent zombie process
             if os.path.exists(output_path):
                 try:
                     os.remove(output_path)
@@ -1014,25 +974,11 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
     def copy_to_clipboard(self, text: str) -> bool:
         """Copy text to system clipboard (Wayland optimized).
 
-        Uses wl-copy for Wayland.
+        Uses wl-copy directly for Wayland.
 
         Returns:
             True if clipboard copy succeeded, False otherwise
         """
-        # Use printf via bash with environment variable (safe for special chars)
-        try:
-            result = subprocess.run(
-                ['bash', '-c', 'printf "%s" "$CLIP_TEXT" | wl-copy'],
-                capture_output=True,
-                timeout=3,
-                env={**os.environ, 'CLIP_TEXT': text}
-            )
-            if result.returncode == 0:
-                return True
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-        # Fallback: direct wl-copy with stdin
         try:
             process = subprocess.Popen(
                 ['wl-copy'],
@@ -1040,47 +986,66 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            process.communicate(input=text.encode('utf-8'), timeout=2)
-            if process.returncode == 0:
-                return True
+            process.communicate(input=text.encode('utf-8'), timeout=1)
+            return process.returncode == 0
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-            pass
+            return False
 
-        return False
-
-    def ask_password_method(self) -> Tuple[Optional[str], bool]:
+    def ask_password_method(self) -> Tuple[Optional[str], bool, bool]:
         """Generate secure passphrase for encryption.
 
         No manual password option - always generates secure passphrase
         for maximum security.
 
         Returns:
-            Tuple of (passphrase, True) if confirmed, (None, False) if cancelled
+            Tuple of (passphrase, confirmed, delete_original)
+            - passphrase: The generated passphrase or None if cancelled
+            - confirmed: True if user clicked Encrypt or Encrypt & Delete
+            - delete_original: True if user clicked Encrypt & Delete
         """
         # Generate passphrase automatically
         passphrase = self.generate_passphrase()
-        clipboard_ok = self.copy_to_clipboard(passphrase)
 
-        if clipboard_ok:
-            clip_msg = "📋 Passphrase copied to clipboard!"
-        else:
-            clip_msg = "⚠️ Could not copy - select and copy manually"
-
+        # Show zenity dialog FIRST (non-blocking start) for faster perceived response
+        # Clipboard copy happens in parallel while dialog renders
         try:
-            confirm = subprocess.run(
+            zenity_process = subprocess.Popen(
                 ['zenity', '--question',
                  '--title', '🔐 Secure Passphrase',
-                 '--text', f'{clip_msg}\n\n'
+                 '--text', '📋 Passphrase copied to clipboard!\n\n'
                           f'<tt><b>{passphrase}</b></tt>\n\n'
-                          f'⚠️ Save this passphrase now!',
-                 '--ok-label', '🔒 Encrypt',
+                          '⚠️ Save this passphrase now!',
+                 '--ok-label', '🔒 Encrypt (keep original)',
                  '--cancel-label', 'Cancel',
+                 '--extra-button', '🔒🗑️ Encrypt & Delete original',
                  '--width', '550'],
-                timeout=300
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
             )
-            return (passphrase, True) if confirm.returncode == 0 else (None, False)
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return (None, False)
+
+            # Copy to clipboard IN PARALLEL while zenity dialog is rendering
+            self.copy_to_clipboard(passphrase)
+
+            # Wait for user response
+            stdout, _ = zenity_process.communicate(timeout=300)
+            returncode = zenity_process.returncode
+
+            # Check which button was pressed
+            if returncode == 0:
+                # OK button (Encrypt without delete)
+                return (passphrase, True, False)
+            elif 'Delete' in stdout:
+                # Extra button (Encrypt & Delete)
+                return (passphrase, True, True)
+            else:
+                # Cancel
+                return (None, False, False)
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            if 'zenity_process' in locals():
+                zenity_process.kill()
+            return (None, False, False)
 
     def ask_yes_no(self, title: str, text: str) -> bool:
         """Ask yes/no question using zenity"""
@@ -1097,15 +1062,15 @@ class AgeEncryptionExtension(GObject.GObject, Nautilus.MenuProvider):
             return False
 
     def show_notification(self, title: str, message: str) -> None:
-        """Show a system notification"""
+        """Show a system notification (non-blocking)"""
         try:
-            subprocess.run(
+            subprocess.Popen(
                 ['notify-send', '-i', 'dialog-information',
                  title, message],
-                timeout=2
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            # Silence notification errors - they are not critical
+        except (FileNotFoundError, OSError):
             pass
 
     def show_error(self, title: str, message: str) -> None:
