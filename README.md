@@ -2,7 +2,7 @@
 
 Complete Nautilus (GNOME Files) extension for encrypting and decrypting files using **age** (Actually Good Encryption).
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.8+-yellow)
 
@@ -13,12 +13,13 @@ Complete Nautilus (GNOME Files) extension for encrypting and decrypting files us
 - **🔒 Encrypt individual files** - Right-click → Encrypt with age
 - **🔓 Decrypt .age files** - Right-click on .age files → Decrypt with age
 - **📦 Encrypt complete folders** - Compresses (tar.gz) and encrypts in a single step
+- **🎲 Passphrase generator** - Generate secure, memorable passphrases with one click
 - **🗑️ Optional secure deletion** - Deletes original files with `shred` (3 passes)
 - **✅ Integrity verification** - Validates .age files before decryption
 - **🔄 Batch encryption** - Select multiple files and encrypt all at once
 - **📦 Automatic extraction** - Decompresses encrypted folders automatically
 - **🔔 Notifications** - System notifications when operations complete
-- **🎨 Intuitive interface** - Graphical dialogs with Zenity
+- **🎨 Intuitive interface** - Native GTK dialogs with passphrase generation
 
 ### 🛡️ Security
 
@@ -26,6 +27,9 @@ Complete Nautilus (GNOME Files) extension for encrypting and decrypting files us
 - **Key derivation:** scrypt (resistant to GPU/ASIC attacks)
 - **Authentication:** Built-in (detects modifications)
 - **No dangerous configuration:** age is designed to be secure by default
+- **🚫 Rate limiting:** Protection against brute-force attacks (3 attempts, 30s lockout)
+- **🛤️ Path validation:** Protection against path traversal attacks
+- **📝 Logging system:** Security events logged for audit
 
 ## 📸 Screenshots
 
@@ -121,6 +125,23 @@ nautilus -q
 2. Enter your password
 3. Original file is recovered
 4. If it's a folder (`.tar.gz`), asks if you want to extract it
+
+### 🎲 Using the Passphrase Generator
+
+When encrypting files or folders, you can generate a secure passphrase instead of typing one manually:
+
+1. **Click "🎲 Generate Passphrase"** in the password dialog
+2. A secure passphrase like `tiger-ocean-mountain-castle` is generated
+3. The passphrase is **automatically copied to clipboard**
+4. Click **OK** to encrypt (no confirmation needed for generated passphrases)
+
+**Benefits:**
+- **Secure**: Uses cryptographically secure random selection (`secrets` module)
+- **Memorable**: 4 random words are easier to remember than random characters
+- **Strong**: ~62 billion combinations (500^4) makes brute-force impractical
+- **Fast**: No need to type the same password twice
+
+**Tip**: Save the generated passphrase in a password manager immediately!
 
 ## 🎯 Use Case Examples
 
@@ -296,6 +317,22 @@ Found a bug? Have an idea for improvement?
 
 ## 📝 Changelog
 
+### v1.2.0 (2025-12-28)
+- 🛡️ **Security Audit**: Complete security review with Semgrep - 0 vulnerabilities
+- 🚫 **Rate Limiting**: Brute-force protection (3 attempts per file, 30s lockout, 5min window)
+- 🛤️ **Path Validation**: Protection against path traversal attacks and accidental system damage
+- 📝 **Logging System**: Security events logged via Python `logging` module
+- 🔄 **Safe Deletion**: Replaced `rm -rf` with `shutil.rmtree()` + validation
+- 🏷️ **Type Hints**: Full type annotations for better code quality
+- 🐛 **Bug Fixes**: Fixed GLib return values for proper async handling
+
+### v1.1.0 (2025-12-28)
+- 🎲 **Passphrase Generator**: Generate secure, memorable passphrases with one click
+- 📋 **Auto-copy to clipboard**: Generated passphrases are automatically copied
+- 🎨 **Native GTK dialogs**: Replaced Zenity password dialogs with native GTK for better integration
+- ⚡ **Skip confirmation**: Generated passphrases skip the re-enter step for faster workflow
+- 🔒 Uses cryptographically secure `secrets` module for random selection
+
 ### v1.0.0 (2025-12-27)
 - ✨ Initial release
 - 🔒 Individual file encryption
@@ -311,9 +348,9 @@ MIT License - See LICENSE file for details
 
 ## 👏 Credits
 
+- **Author** - Homero Thompson del Lago del Terror
 - **age** - Filippo Valsorda (Google Crypto Team)
 - **Nautilus** - GNOME Project
-- **Extension** - Created with ❤️ on a Saturday night
 
 ## 🔗 Useful Links
 
