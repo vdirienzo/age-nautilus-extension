@@ -215,8 +215,8 @@ The HSM option:
 1. Detects if libeToken.so is installed (auto-detection)
 2. Verifies the token is physically connected
 3. Prompts for your token PIN
-4. Generates 256 bits of true hardware random
-5. Encodes as Base64 passphrase (43 characters)
+4. Generates 256 bytes (2048 bits) of true hardware random
+5. Encodes as Base64 passphrase (~342 characters)
 
 **Benefits of HSM encryption:**
 - **True hardware randomness** - Not software PRNG, actual quantum-level entropy
@@ -234,6 +234,28 @@ The HSM option:
 | Speed | Instant | ~500ms |
 
 **Note:** For most users, the software-generated passphrase (24 words, ~215 bits) is already more than sufficient. HSM support is for high-security environments with specific compliance requirements or threat models that include sophisticated state-level attackers.
+
+**Configuring HSM passphrase length:**
+
+You can customize the HSM passphrase length by editing `nautilus-age-extension.py`:
+
+```python
+# Line ~60 - Default is 256 bytes (2048 bits)
+PKCS11_RANDOM_BYTES = 256  # 2048 bits of entropy (~342 chars Base64)
+```
+
+| Value | Bits | Base64 Length | Security Level |
+|-------|------|---------------|----------------|
+| `128` | 1024 bits | ~171 chars | High (sufficient for most use cases) |
+| `256` | 2048 bits | ~342 chars | Very High (default) |
+| `512` | 4096 bits | ~683 chars | Extreme (overkill for most scenarios) |
+
+**When to change:**
+- **Reduce to 128**: If you need shorter passphrases for manual entry or limited storage
+- **Keep at 256**: Recommended default - excellent security without excessive length
+- **Increase to 512**: Only for extreme paranoia or specific compliance requirements
+
+> **Security note:** Even 128 bytes (1024 bits) from a hardware TRNG is astronomically secure. The default of 256 bytes provides a massive security margin.
 
 ## 🎯 Use Case Examples
 
